@@ -224,6 +224,10 @@ public:
   /// Warn that there is a cycle in acquired_before/after dependencies.
   virtual void handleBeforeAfterCycle(Name L1Name, SourceLocation Loc) {}
 
+  /// Warn when V1 is written without V2 in the same lock.
+  virtual void handleWrittenWithout(StringRef V1Name, StringRef V2Name,
+                                    SourceLocation Loc) {}
+
   /// Called by the analysis when starting analysis of a function.
   /// Used to issue suggestions for changes to annotations.
   virtual void enterFunction(const FunctionDecl *FD) {}

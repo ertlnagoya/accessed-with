@@ -2033,6 +2033,13 @@ class ThreadSafetyReporter : public clang::threadSafety::ThreadSafetyHandler {
     Warnings.emplace_back(std::move(Warning), getNotes());
   }
 
+  void handleWrittenWithout(StringRef V1Name, StringRef V2Name,
+                            SourceLocation Loc) override {
+    PartialDiagnosticAt Warning(Loc,
+      S.PDiag(diag::warn_written_without) << V1Name << V2Name);
+    Warnings.emplace_back(std::move(Warning), getNotes());
+  }
+
   void enterFunction(const FunctionDecl* FD) override {
     CurrentFunction = FD;
   }
