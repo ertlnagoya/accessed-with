@@ -3331,6 +3331,17 @@ def LocksExcluded : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
+def AccessedWith : InheritableAttr {
+  let Spellings = [Clang<"accessed_with", 0>];
+  let Subjects = SubjectList<[Field, SharedVar]>;
+  let Args = [VariadicExprArgument<"Args">];
+  let LateParsed = 1;
+  let TemplateDependent = 1;
+  let ParseArgumentsAsUnevaluated = 1;
+  let InheritEvenIfAlreadyPresent = 1;
+  let Documentation = [Undocumented];
+}
+
 // C/C++ consumed attributes.
 
 def Consumable : InheritableAttr {

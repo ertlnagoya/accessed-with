@@ -7810,6 +7810,58 @@ static void handleRequiresCapabilityAttr(Sema &S, Decl *D,
   D->addAttr(RCA);
 }
 
+static const ValueDecl *getValueDecl(const Expr *Exp) {
+  if (const auto *CE = dyn_cast<ImplicitCastExpr>(Exp))
+    return getValueDecl(CE->getSubExpr());
+
+  if (const auto *DR = dyn_cast<DeclRefExpr>(Exp))
+    return DR->getDecl();
+
+  if (const auto *ME = dyn_cast<MemberExpr>(Exp))
+    return ME->getMemberDecl();
+
+  return nullptr;
+}
+
+static bool checkAccessedWithAttr(Sema &S, Decl *D, const ParsedAttr &AL,
+                                  SmallVectorImpl<Expr *> &Args) {
+  // Check if there is more than one argument.
+  if (!AL.checkAtLeastNumArgs(S, 1))
+    return false;
+
+  // Check if this attribute applies to variables annotated with GUARDED_BY.
+  const auto *VD = dyn_cast<ValueDecl>(D);
+  if (!VD || !VD->hasAttr<GuardedByAttr>()) {
+    S.Diag(AL.getLoc(), diag::warn_thread_attribute_decl_not_guarded) << AL;
+    return false;
+  }
+
+  // Check that all arguments are annotated with GUARDED_BY.
+  for (unsigned Idx = 0; Idx < AL.getNumArgs(); ++Idx) {
+    Expr *ArgExp = AL.getArgAsExpr(Idx);
+    const auto *ArgVD = getValueDecl(ArgExp);
+    if (!ArgVD || !ArgVD->hasAttr<GuardedByAttr>()) {
+      S.Diag(AL.getLoc(), diag::warn_thread_attribute_argument_not_guarded) << AL;
+      continue;
+    }
+    Args.push_back(ArgExp);
+  }
+  if (Args.empty())
+    return false;
+
+  return true;
+}
+
+static void handleAccessedWithAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  SmallVector<Expr *, 1> Args;
+  if (!checkAccessedWithAttr(S, D, AL, Args))
+    return;
+
+  Expr **StartArg = &Args[0];
+  D->addAttr(::new (S.Context)
+                 AccessedWithAttr(S.Context, AL, StartArg, Args.size()));
+}
+
 static void handleDeprecatedAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (const auto *NSD = dyn_cast<NamespaceDecl>(D)) {
     if (NSD->isAnonymousNamespace()) {
@@ -8976,6 +9028,9 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
     break;
   case ParsedAttr::AT_TryAcquireCapability:
     handleTryAcquireCapabilityAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_AccessedWith:
+    handleAccessedWithAttr(S, D, AL);
     break;
 
   // Consumed analysis attributes.
