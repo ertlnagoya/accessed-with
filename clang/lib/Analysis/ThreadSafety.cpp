@@ -267,6 +267,12 @@ public:
   }
 };
 
+struct PartCheck {
+  const NamedDecl *D;
+  Expr *PartExp;
+  SourceLocation Loc;
+};
+
 class ThreadSafetyAnalyzer;
 
 } // namespace
@@ -1531,12 +1537,16 @@ class BuildLockset : public ConstStmtVisitor<BuildLockset> {
   FactSet FSet;
   LocalVariableMap::Context LVarCtx;
   unsigned CtxIndex;
+  std::vector<std::string> PSet;
+  std::vector<PartCheck> PCheckSet;
 
   // helper functions
   void warnIfMutexNotHeld(const NamedDecl *D, const Expr *Exp, AccessKind AK,
                           Expr *MutexExp, ProtectedOperationKind POK,
                           SourceLocation Loc);
   void warnIfMutexHeld(const NamedDecl *D, const Expr *Exp, Expr *MutexExp);
+  void warnIfPartNotAccessed(const NamedDecl *D, Expr *PartExp,
+                             SourceLocation Loc);
 
   void checkAccess(const Expr *Exp, AccessKind AK,
                    ProtectedOperationKind POK = POK_VarAccess);
@@ -1552,7 +1562,9 @@ class BuildLockset : public ConstStmtVisitor<BuildLockset> {
 public:
   BuildLockset(ThreadSafetyAnalyzer *Anlzr, CFGBlockInfo &Info)
       : ConstStmtVisitor<BuildLockset>(), Analyzer(Anlzr), FSet(Info.EntrySet),
-        LVarCtx(Info.EntryContext), CtxIndex(Info.EntryIndex) {}
+        LVarCtx(Info.EntryContext), CtxIndex(Info.EntryIndex),
+        PSet(std::vector<std::string>(0)),
+        PCheckSet(std::vector<PartCheck>(0)) {}
 
   void VisitUnaryOperator(const UnaryOperator *UO);
   void VisitBinaryOperator(const BinaryOperator *BO);
@@ -1645,6 +1657,15 @@ void BuildLockset::warnIfMutexHeld(const NamedDecl *D, const Expr *Exp,
   }
 }
 
+void BuildLockset::warnIfPartNotAccessed(const NamedDecl *D, Expr *PartExp,
+                                         SourceLocation Loc) {
+  if (const ValueDecl *VD = getValueDecl(PartExp)) {
+    std::string s = VD->getNameAsString();
+    if (std::find(PSet.begin(), PSet.end(), s) == PSet.end())
+      Analyzer->Handler.handleWrittenWithout(D->getNameAsString(), s, Loc);
+  }
+}
+
 /// Checks guarded_by and pt_guarded_by attributes.
 /// Whenever we identify an access (read or write) to a DeclRefExpr that is
 /// marked with guarded_by, we must ensure the appropriate mutexes are held.
@@ -1703,6 +1724,8 @@ void BuildLockset::checkAccess(const Expr *Exp, AccessKind AK,
   }
 
   const ValueDecl *D = getValueDecl(Exp);
+  if (D && AK == AK_Written)
+    PSet.push_back(D->getNameAsString());
   if (!D || !D->hasAttrs())
     return;
 
@@ -1712,6 +1735,12 @@ void BuildLockset::checkAccess(const Expr *Exp, AccessKind AK,
 
   for (const auto *I : D->specific_attrs<GuardedByAttr>())
     warnIfMutexNotHeld(D, Exp, AK, I->getArg(), POK, Loc);
+
+  if (AK != AK_Written)
+    return;
+  for (const auto *Attr : D->specific_attrs<AccessedWithAttr>())
+    for (auto *Arg : Attr->args())
+      PCheckSet.push_back(PartCheck{D, Arg, Loc});
 }
 
 /// Checks pt_guarded_by and pt_guarded_var attributes.
@@ -2047,6 +2076,13 @@ void BuildLockset::VisitCallExpr(const CallExpr *Exp) {
   auto *D = dyn_cast_or_null<NamedDecl>(Exp->getCalleeDecl());
   if(!D || !D->hasAttrs())
     return;
+
+  if (D->hasAttr<ReleaseCapabilityAttr>()) {
+    for (const auto PCheck : PCheckSet)
+      warnIfPartNotAccessed(PCheck.D, PCheck.PartExp, PCheck.Loc);
+    PSet.clear();
+    PCheckSet.clear();
+  }
   handleCall(Exp, D);
 }
 
